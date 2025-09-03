@@ -480,6 +480,8 @@ def enviar_email(destinatario, asunto, mensaje):
         em = EmailMessage()
         em["From"] = remitente
         em["To"] = destinatario
+        if "TEACHER_BCC" in st.secrets:
+        em["Bcc"] = st.secrets["TEACHER_BCC"]
         em["Subject"] = asunto
         em.set_content(mensaje)
 
