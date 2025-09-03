@@ -6,15 +6,28 @@ from docx import Document
 from pdfminer.high_level import extract_text
 from email_validator import validate_email, EmailNotValidError
 
-# -----------------------------
-# Configuración inicial
-# -----------------------------
+# ---------------------------------
+# Configuración
+# ---------------------------------
 st.set_page_config(page_title="Auto-corrección | Metodología", layout="centered")
+
 RUBRIC_MAX = {1: 100, 2: 100, 3: 100, 4: 100, 5: 100, 6: 100, 7: 100, 8: 100}
 
-# -----------------------------
+PRACTICO_LABELS = {
+    1: "Práctico Nº 1 — IA en la escritura del proyecto",
+    2: "Práctico Nº 2 — Operacionalización de variables y métodos de análisis",
+    3: "Práctico Nº 3 — Muestreo, instrumentos y tamaño muestral",
+    4: "Práctico Nº 4 — Introducción + Marco teórico + Búsqueda (≈500 palabras en total)",
+    5: "Trabajo práctico Módulo 5 — Mendeley: citas en Word y bibliografía",
+    6: "Trabajo práctico Módulo 6 — Estilos de Word e índice automático",
+    7: "Práctico Nº 7 — Análisis cuantitativo",
+    8: "Práctico Nº 8 — Análisis cualitativo",
+}
+
+
+# ---------------------------------
 # Lectura de archivos
-# -----------------------------
+# ---------------------------------
 def read_docx(file_bytes: bytes) -> dict:
     bio = io.BytesIO(file_bytes)
     doc = Document(bio)
@@ -27,6 +40,7 @@ def read_docx(file_bytes: bytes) -> dict:
             texts.append(txt)
     return {"plain_text": "\n".join(texts), "paragraphs": paragraphs, "filetype": "docx"}
 
+
 def read_pdf(file_bytes: bytes) -> dict:
     bio = io.BytesIO(file_bytes)
     text = extract_text(bio) or ""
@@ -35,6 +49,7 @@ def read_pdf(file_bytes: bytes) -> dict:
         "paragraphs": [(line.strip(), "") for line in text.splitlines() if line.strip()],
         "filetype": "pdf",
     }
+
 
 def parse_file(uploaded) -> dict:
     suffix = Path(uploaded.name).suffix.lower()
@@ -47,19 +62,23 @@ def parse_file(uploaded) -> dict:
         st.error("Formato no soportado. Suba un archivo .docx o .pdf")
         return {"plain_text": "", "paragraphs": [], "filetype": "unknown"}
 
-# -----------------------------
+
+# ---------------------------------
 # Utilidades de evaluación
-# -----------------------------
+# ---------------------------------
 def count_in_text(patterns, text_lower):
     return sum(1 for p in patterns if p in text_lower)
+
 
 def apa_inline_citations(text):
     """Cuenta citas tipo (Apellido, 2020) aproximadamente."""
     return len(re.findall(r"\([A-Za-zÁÉÍÓÚÜÑáéíóúüñ\-]+,\s?(19|20)\d{2}\)", text))
 
+
 def has_bibliography_section(text_lower):
     keys = ["bibliografía", "referencias", "referencias bibliográficas"]
     return any(k in text_lower for k in keys)
+
 
 def find_headings_docx(paragraphs):
     """Cuenta títulos por estilo en DOCX."""
@@ -67,6 +86,7 @@ def find_headings_docx(paragraphs):
     h2 = sum(1 for _, s in paragraphs if "Heading 2" in s or "Título 2" in s)
     h3 = sum(1 for _, s in paragraphs if "Heading 3" in s or "Título 3" in s)
     return h1, h2, h3
+
 
 def has_toc(text_lower, paragraphs, filetype):
     """Detecta ‘Tabla de contenido/Índice’."""
@@ -77,10 +97,11 @@ def has_toc(text_lower, paragraphs, filetype):
             return True
     return False
 
+
 def build_feedback_message(num, score, breakdown, summary):
     lines = []
     lines.append("Resultado de la corrección automática:\n")
-    lines.append(f"Práctico Nº {num}")
+    lines.append(f"{PRACTICO_LABELS[num]}")
     lines.append(f"Puntaje: {score}/{RUBRIC_MAX[num]}\n")
     lines.append("Desglose por criterios:")
     for name, got, mx, expl in breakdown:
@@ -89,11 +110,11 @@ def build_feedback_message(num, score, breakdown, summary):
     lines.append(summary if summary else "—")
     return "\n".join(lines)
 
-# -----------------------------
+
+# ---------------------------------
 # Rúbricas por práctico
 # Devuelven: score:int, breakdown:list[(criterio, pts, max, explicación)], summary:str
-# -----------------------------
-
+# ---------------------------------
 def corregir_practico_1(text, paragraphs, filetype):
     t = text.lower()
     total = 0
@@ -429,9 +450,9 @@ def corregir_practico_8(text, paragraphs, filetype):
     return total, bd, summary
 
 
-# -----------------------------
+# ---------------------------------
 # Router de evaluación
-# -----------------------------
+# ---------------------------------
 def evaluar_practico(num, text, paragraphs, filetype):
     if num == 1: return corregir_practico_1(text, paragraphs, filetype)
     if num == 2: return corregir_practico_2(text, paragraphs, filetype)
@@ -443,9 +464,10 @@ def evaluar_practico(num, text, paragraphs, filetype):
     if num == 8: return corregir_practico_8(text, paragraphs, filetype)
     return 0, [], "—"
 
-# -----------------------------
+
+# ---------------------------------
 # Envío de correo (SMTP Gmail)
-# -----------------------------
+# ---------------------------------
 def enviar_email(destinatario, asunto, mensaje):
     try:
         remitente = st.secrets["EMAIL_USER"]
@@ -474,14 +496,21 @@ def enviar_email(destinatario, asunto, mensaje):
         st.error(f"Error enviando correo: {e}")
         return False
 
-# -----------------------------
+
+# ---------------------------------
 # Interfaz Streamlit
-# -----------------------------
+# ---------------------------------
 st.title("📑 Auto-corrección de Prácticos")
 st.write("Suba su archivo, elija el práctico y escriba el correo electrónico del alumno. Recibirá puntaje y explicaciones por criterio.")
 
 correo = st.text_input("Correo electrónico del alumno")
-practico = st.selectbox("Número de práctico", list(RUBRIC_MAX.keys()))
+
+# Select con nombres nominales
+opciones = [PRACTICO_LABELS[k] for k in PRACTICO_LABELS]
+label_seleccionado = st.selectbox("Práctico", opciones)
+label_to_num = {v: k for k, v in PRACTICO_LABELS.items()}
+practico_num = label_to_num[label_seleccionado]
+
 uploaded = st.file_uploader("Subir archivo (.docx o .pdf)", type=["docx", "pdf"])
 
 if st.button("Corregir y Enviar"):
@@ -493,10 +522,11 @@ if st.button("Corregir y Enviar"):
             parsed = parse_file(uploaded)
             text, paragraphs, filetype = parsed["plain_text"], parsed["paragraphs"], parsed["filetype"]
 
-            score, breakdown, summary = evaluar_practico(practico, text, paragraphs, filetype)
-            mensaje = build_feedback_message(practico, score, breakdown, summary)
+            score, breakdown, summary = evaluar_practico(practico_num, text, paragraphs, filetype)
+            mensaje = build_feedback_message(practico_num, score, breakdown, summary)
 
-            enviado = enviar_email(correo, f"Resultado Práctico {practico}", mensaje)
+            asunto = f"Resultado — {PRACTICO_LABELS[practico_num]}"
+            enviado = enviar_email(correo, asunto, mensaje)
             if enviado:
                 st.success("✅ Corregido y enviado al correo del alumno.")
                 st.text_area("Mensaje enviado:", mensaje, height=280)
