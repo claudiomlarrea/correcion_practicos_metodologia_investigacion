@@ -15,8 +15,8 @@ RUBRIC_MAX = {1: 100, 2: 100, 3: 100, 4: 100, 5: 100, 6: 100, 7: 100, 8: 100}
 
 PRACTICO_LABELS = {
     1: "Práctico Nº 1 — IA en la escritura del proyecto",
-    2: "Práctico Nº 2 — Establecimiento de Métodos de Recolección de Datos y Tipos de Muestreos",
-    3: "Práctico Nº 3 — Operacionalización de Variables y Determinación de Métodos de Análisis de Datos",
+    2: "Práctico Nº 2 — Operacionalización de variables y métodos de análisis",
+    3: "Práctico Nº 3 — Muestreo, instrumentos y tamaño muestral",
     4: "Práctico Nº 4 — Introducción + Marco teórico + Búsqueda (≈500 palabras en total)",
     5: "Trabajo práctico Módulo 5 — Mendeley: citas en Word y bibliografía",
     6: "Trabajo práctico Módulo 6 — Estilos de Word e índice automático",
@@ -329,8 +329,11 @@ def corregir_practico_8(text, paragraphs, filetype):
 # ---------------------------------
 def evaluar_practico(num, text, paragraphs, filetype):
     if num == 1: return corregir_practico_1(text, paragraphs, filetype)
-    if num == 2: return corregir_practico_2(text, paragraphs, filetype)
-    if num == 3: return corregir_practico_3(text, paragraphs, filetype)
+    # Intercambio de lógica: 
+    # - Práctico 2 debe evaluar muestreo, instrumentos, validación y tamaño muestral
+    # - Práctico 3 debe evaluar operacionalización y métodos de análisis
+    if num == 2: return corregir_practico_3(text, paragraphs, filetype)
+    if num == 3: return corregir_practico_2(text, paragraphs, filetype)
     if num == 4: return corregir_practico_4(text, paragraphs, filetype)
     if num == 5: return corregir_practico_5(text, paragraphs, filetype)
     if num == 6: return corregir_practico_6(text, paragraphs, filetype)
