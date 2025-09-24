@@ -15,8 +15,8 @@ RUBRIC_MAX = {1: 100, 2: 100, 3: 100, 4: 100, 5: 100, 6: 100, 7: 100, 8: 100}
 
 PRACTICO_LABELS = {
     1: "Práctico Nº 1 — IA en la escritura del proyecto",
-    2: "Práctico Nº 2 — Operacionalización de variables y métodos de análisis",
-    3: "Práctico Nº 3 — Muestreo, instrumentos y tamaño muestral",
+    2: "Práctico Nº 2 — Establecimiento de Métodos de Recolección de Datos y Tipos de Muestreos. Tamaño de la Muestra",
+    3: "Práctico Nº 3 — Operacionalización de Variables y Determinación de Métodos de Análisis de Datos",
     4: "Práctico Nº 4 — Introducción + Marco teórico + Búsqueda (≈500 palabras en total)",
     5: "Trabajo práctico Módulo 5 — Mendeley: citas en Word y bibliografía",
     6: "Trabajo práctico Módulo 6 — Estilos de Word e índice automático",
