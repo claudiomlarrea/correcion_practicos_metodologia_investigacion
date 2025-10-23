@@ -1,15 +1,19 @@
 import io
 import re
 import json
-import smtplib, ssl
-from email.message import EmailMessage
-
 import streamlit as st
 import pandas as pd
+
+# Validación de email
+from email_validator import validate_email, EmailNotValidError
 
 # Lectura de documentos
 from docx import Document as DocxDocument
 from pdfminer.high_level import extract_text as pdf_extract_text
+
+# Envío por SendGrid
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 # =============== Configuración ===============
 st.set_page_config(page_title="Auto-corrección de Prácticos", page_icon="📝", layout="centered")
@@ -20,7 +24,6 @@ st.caption(
 )
 
 # =============== Lista de prácticos (extendida + dinámica) ===============
-# Base que viste en tu app; podés sumar más con Secrets/CSV/textarea sin tocar código.
 PRACTICOS_BASE = [
     "Práctico N° 1 — IA en la escritura del proyecto",
     "Práctico N° 1 — IA en la escritura del proyecto (variante)",
@@ -40,7 +43,7 @@ with st.expander("⚙️ Configurar lista de prácticos (opcional)"):
 
 def cargar_practicos() -> list:
     merged = []
-    # 1) Secrets JSON
+    # 1) Secrets (JSON)
     if "PRACTICOS_JSON" in st.secrets:
         try:
             data = json.loads(st.secrets["PRACTICOS_JSON"])
@@ -51,7 +54,7 @@ def cargar_practicos() -> list:
                         merged.append(s)
         except Exception:
             pass
-    # 2) CSV opcional
+    # 2) CSV
     if csv_practicos is not None:
         try:
             dfp = pd.read_csv(csv_practicos)
@@ -62,13 +65,13 @@ def cargar_practicos() -> list:
                         merged.append(s)
         except Exception:
             pass
-    # 3) Manual (textarea)
+    # 3) Manual
     if manual_practicos_text.strip():
         for ln in manual_practicos_text.splitlines():
             s = ln.strip()
             if s and s not in merged:
                 merged.append(s)
-    # 4) Base por defecto
+    # 4) Base
     for s in PRACTICOS_BASE:
         if s not in merged:
             merged.append(s)
@@ -100,6 +103,11 @@ if st.button("Corregir y Enviar"):
         st.stop()
     if not alumno_email.strip():
         st.warning("Por favor, ingresá el **correo** del alumno.")
+        st.stop()
+    try:
+        validate_email(alumno_email, check_deliverability=False)
+    except EmailNotValidError as e:
+        st.warning(f"Correo del alumno no válido: {e}")
         st.stop()
     if not archivo:
         st.warning("Subí el archivo (.docx o .pdf).")
@@ -161,43 +169,35 @@ Comentarios generales:
     st.success("✔️ Corregido y enviado al correo del alumno.")
     st.text_area("Mensaje enviado:", mensaje_preview, height=420)
 
-    # =============== Envío de correos (SMTP) ===============
-    # Configurá estos secrets en Streamlit Cloud > Settings > Secrets
-    SMTP_HOST     = st.secrets.get("SMTP_HOST", "")
-    SMTP_PORT     = int(st.secrets.get("SMTP_PORT", 465))
-    SMTP_USER     = st.secrets.get("SMTP_USER", "")
-    SMTP_PASS     = st.secrets.get("SMTP_PASS", "")
-    SENDER_EMAIL  = st.secrets.get("SENDER_EMAIL", "")
+    # =============== Envío por SendGrid ===============
+    SENDGRID_API_KEY = st.secrets.get("SENDGRID_API_KEY", "")
+    SENDER_EMAIL     = st.secrets.get("SENDER_EMAIL", "")
     # Si no definís EMAIL_CATEDRA en secrets, usa SIEMPRE esta casilla:
-    EMAIL_CATEDRA = st.secrets.get("EMAIL_CATEDRA", "investigacion@uccuyo.edu.ar")
+    EMAIL_CATEDRA    = st.secrets.get("EMAIL_CATEDRA", "investigacion@uccuyo.edu.ar")
 
-    if not all([SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SENDER_EMAIL]):
-        st.warning("⚠️ Falta configurar credenciales SMTP en **st.secrets**. Abajo podés descargar el mensaje en TXT.")
+    if not SENDGRID_API_KEY or not SENDER_EMAIL:
+        st.warning("⚠️ Falta `SENDGRID_API_KEY` o `SENDER_EMAIL` en **st.secrets**. Abajo podés descargar el mensaje en TXT.")
     else:
-        def enviar(destinatario: str, incluir_correo_alumno: bool = False):
+        def enviar(to_email: str, incluir_correo_alumno: bool = False):
             subject = f"Resultado — {practico} · {alumno_nombre}"
-
-            # Para tu copia agregamos explícitamente el correo del alumno al inicio del cuerpo
             body = mensaje_preview
             if incluir_correo_alumno:
-                body = f"Correo del alumno: {alumno_email}\n\n" + body
+                body = f"Correo del alumno: {alumno_email}\n\n" + body  # << lo ves en tu copia
 
-            msg = EmailMessage()
-            msg["Subject"] = subject
-            msg["From"] = SENDER_EMAIL
-            msg["To"] = destinatario
-            msg.set_content(body)
-
-            ctx = ssl.create_default_context()
-            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx) as server:
-                server.login(SMTP_USER, SMTP_PASS)
-                server.send_message(msg)
+            message = Mail(
+                from_email=SENDER_EMAIL,
+                to_emails=to_email,
+                subject=subject,
+                plain_text_content=body
+            )
+            sg = SendGridAPIClient(SENDGRID_API_KEY)
+            sg.send(message)
 
         try:
-            enviar(alumno_email)                                # al alumno
-            enviar(EMAIL_CATEDRA, incluir_correo_alumno=True)   # SIEMPRE a tu casilla, con la línea "Correo del alumno: ..."
+            enviar(alumno_email)                          # al alumno
+            enviar(EMAIL_CATEDRA, incluir_correo_alumno=True)  # SIEMPRE a tu casilla con la línea extra
         except Exception as e:
-            st.warning(f"No se pudo enviar el correo automáticamente: {e}")
+            st.warning(f"No se pudo enviar el correo por SendGrid: {e}")
 
     # =============== Descarga local del resultado (TXT) ===============
     nombre_txt = f"Devolucion_{alumno_nombre.replace(' ', '_')}.txt"
