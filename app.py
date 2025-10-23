@@ -1,5 +1,6 @@
 import io
 import re
+import json
 import smtplib, ssl
 from email.message import EmailMessage
 
@@ -18,14 +19,64 @@ st.caption(
     "La app devuelve puntaje por criterios y envía la devolución al alumno y a la cátedra."
 )
 
-# Prácticos disponibles (podés editar la lista si querés)
-PRACTICOS = [
+# =============== Lista de prácticos (extendida + dinámica) ===============
+# Incluye los que aparecen en tus capturas; puedes sumar más con los métodos de abajo.
+PRACTICOS_BASE = [
     "Práctico N° 1 — IA en la escritura del proyecto",
-    "Práctico N° 2 — Marco teórico y antecedentes",
-    "Práctico N° 3 — Diseño metodológico",
+    "Práctico N° 1 — IA en la escritura del proyecto (variante)",
+    "Práctico N° 2 — Establecimiento de Métodos de Recolección de Datos y Tipos de Muestreos. Tamaño de muestra",
+    "Práctico N° 3 — Operacionalización de Variables y Determinación de Métodos de Análisis de Datos",
+    "Práctico N° 4 — Introducción + Marco teórico + Búsqueda (≈500 palabras en total)",
+    "Trabajo práctico Módulo 5 — Mendeley: citas en Word y bibliografía",
+    "Trabajo práctico Módulo 6 — Estilos de Word e índice automático",
+    "Práctico N° 7 — Análisis cuantitativo",
+    "Práctico N° 8 — Análisis cualitativo",
 ]
 
-# Criterios de ejemplo (como en tu app: Tema/Título, Paradigma, Pregunta, Objetivos, Hipótesis)
+with st.expander("⚙️ Configurar lista de prácticos (opcional)"):
+    st.write("La lista puede venir de **Secrets** (`PRACTICOS_JSON`), de un **CSV** (columna `practico`) o manual (uno por línea).")
+    csv_practicos = st.file_uploader("CSV con columna 'practico' (opcional)", type=["csv"], key="csv_practicos")
+    manual_practicos_text = st.text_area("Agregar prácticos manualmente (uno por línea)", value="", height=120)
+
+def cargar_practicos() -> list:
+    merged = []
+    # 1) Secrets JSON
+    if "PRACTICOS_JSON" in st.secrets:
+        try:
+            data = json.loads(st.secrets["PRACTICOS_JSON"])
+            if isinstance(data, list):
+                for x in data:
+                    s = str(x).strip()
+                    if s and s not in merged:
+                        merged.append(s)
+        except Exception:
+            pass
+    # 2) CSV opcional
+    if csv_practicos is not None:
+        try:
+            dfp = pd.read_csv(csv_practicos)
+            if "practico" in dfp.columns:
+                for x in dfp["practico"].dropna().tolist():
+                    s = str(x).strip()
+                    if s and s not in merged:
+                        merged.append(s)
+        except Exception:
+            pass
+    # 3) Manual (textarea)
+    if manual_practicos_text.strip():
+        for ln in manual_practicos_text.splitlines():
+            s = ln.strip()
+            if s and s not in merged:
+                merged.append(s)
+    # 4) Base por defecto
+    for s in PRACTICOS_BASE:
+        if s not in merged:
+            merged.append(s)
+    return merged
+
+PRACTICOS = cargar_practicos()
+
+# =============== Criterios (misma rúbrica) ===============
 CRITERIOS = [
     ("Tema y Título", 20, [r"\btema\b", r"\bt[ií]tulo\b"]),
     ("Paradigma", 15, [r"\bparadigma\b"]),
@@ -38,7 +89,7 @@ TOTAL_MAX = sum(p for _, p, _ in CRITERIOS)
 # =============== Entradas ===============
 alumno_nombre = st.text_input("Nombre y apellido del alumno", placeholder="Ej.: Ana María Pérez")
 alumno_email  = st.text_input("Correo electrónico del alumno", placeholder="nombre@uccuyo.edu.ar")
-practico      = st.selectbox("Práctico", PRACTICOS)
+practico      = st.selectbox("Práctico", PRACTICOS or ["(definí la lista en el panel de configuración)"])
 archivo       = st.file_uploader("Subir archivo (.docx o .pdf)", type=["docx", "pdf"])
 
 # =============== Botón principal ===============
@@ -52,6 +103,9 @@ if st.button("Corregir y Enviar"):
         st.stop()
     if not archivo:
         st.warning("Subí el archivo (.docx o .pdf).")
+        st.stop()
+    if not PRACTICOS:
+        st.warning("Definí al menos un práctico.")
         st.stop()
 
     # =============== Lectura del archivo ===============
@@ -126,7 +180,6 @@ Comentarios generales:
             msg["From"] = SENDER_EMAIL
             msg["To"] = destinatario
             msg.set_content(mensaje_preview)  # ← nombre en cuerpo
-
             ctx = ssl.create_default_context()
             with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx) as server:
                 server.login(SMTP_USER, SMTP_PASS)
