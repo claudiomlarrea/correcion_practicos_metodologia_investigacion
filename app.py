@@ -194,7 +194,7 @@ Comentarios generales:
             sg.send(message)
 
         try:
-            enviar(alumno_email)                          # al alumno
+            enviar(alumno_email)                               # al alumno
             enviar(EMAIL_CATEDRA, incluir_correo_alumno=True)  # SIEMPRE a tu casilla con la línea extra
         except Exception as e:
             st.warning(f"No se pudo enviar el correo por SendGrid: {e}")
