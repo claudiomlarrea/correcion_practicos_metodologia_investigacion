@@ -20,7 +20,6 @@ st.caption(
 )
 
 # =============== Lista de prácticos (extendida + dinámica) ===============
-# Incluye los que aparecen en tus capturas; puedes sumar más con los métodos de abajo.
 PRACTICOS_BASE = [
     "Práctico N° 1 — IA en la escritura del proyecto",
     "Práctico N° 1 — IA en la escritura del proyecto (variante)",
@@ -162,24 +161,24 @@ Comentarios generales:
     st.text_area("Mensaje enviado:", mensaje_preview, height=420)
 
     # =============== Envío de correos (SMTP) ===============
-    # Configurá estos secretos en Streamlit Cloud > Settings > Secrets
-    SMTP_HOST    = st.secrets.get("SMTP_HOST", "")
-    SMTP_PORT    = int(st.secrets.get("SMTP_PORT", 465))
-    SMTP_USER    = st.secrets.get("SMTP_USER", "")
-    SMTP_PASS    = st.secrets.get("SMTP_PASS", "")
-    SENDER_EMAIL = st.secrets.get("SENDER_EMAIL", "")
-    EMAIL_CATEDRA = st.secrets.get("EMAIL_CATEDRA", SENDER_EMAIL)
+    # Secrets SMTP; EMAIL_CATEDRA usa por defecto investigacion@uccuyo.edu.ar
+    SMTP_HOST     = st.secrets.get("SMTP_HOST", "")
+    SMTP_PORT     = int(st.secrets.get("SMTP_PORT", 465))
+    SMTP_USER     = st.secrets.get("SMTP_USER", "")
+    SMTP_PASS     = st.secrets.get("SMTP_PASS", "")
+    SENDER_EMAIL  = st.secrets.get("SENDER_EMAIL", "")
+    EMAIL_CATEDRA = st.secrets.get("EMAIL_CATEDRA", "investigacion@uccuyo.edu.ar")  # ← SIEMPRE este por defecto
 
     if not all([SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SENDER_EMAIL]):
         st.warning("⚠️ Falta configurar credenciales SMTP en **st.secrets**. Abajo podés descargar el mensaje en TXT.")
     else:
         def enviar(destinatario: str):
-            subject = f"Resultado — {practico} · {alumno_nombre}"  # ← nombre en asunto
+            subject = f"Resultado — {practico} · {alumno_nombre}"  # nombre en asunto
             msg = EmailMessage()
             msg["Subject"] = subject
             msg["From"] = SENDER_EMAIL
             msg["To"] = destinatario
-            msg.set_content(mensaje_preview)  # ← nombre en cuerpo
+            msg.set_content(mensaje_preview)  # nombre en cuerpo
             ctx = ssl.create_default_context()
             with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx) as server:
                 server.login(SMTP_USER, SMTP_PASS)
@@ -187,8 +186,7 @@ Comentarios generales:
 
         try:
             enviar(alumno_email)       # al alumno
-            if EMAIL_CATEDRA:
-                enviar(EMAIL_CATEDRA)  # a la cátedra (tu casilla)
+            enviar(EMAIL_CATEDRA)      # SIEMPRE a tu casilla
         except Exception as e:
             st.warning(f"No se pudo enviar el correo automáticamente: {e}")
 
