@@ -1,8 +1,11 @@
-# Auto-corrección de Prácticos Curso Metodología de la Investigación
+# Auto-corrección de Prácticos 
 
-Incluye campo de **Nombre y Apellido** en la app y lo agrega al **asunto** y al **cuerpo** del correo de devolución.
+- Campo **Nombre y Apellido** en la app.
+- Lista de prácticos **extendida** y **dinámica**:
+  - `PRACTICOS_JSON` en *Settings → Secrets* (JSON).
+  - CSV con columna `practico`.
+  - Textarea (uno por línea).
+- Envío de devoluciones por **correo** al alumno y a la cátedra, con el **nombre** en asunto y cuerpo.
 
-## Secrets necesarios (Streamlit Cloud)
-
-Configuralos en *Settings → Secrets*:
+## Secrets (Streamlit Cloud)
 
