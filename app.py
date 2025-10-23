@@ -11,15 +11,19 @@ from email_validator import validate_email, EmailNotValidError
 from docx import Document as DocxDocument
 from pdfminer.high_level import extract_text as pdf_extract_text
 
-# Envío por SendGrid
+# Envío por SendGrid (opcional)
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+
+# Envío por SMTP (fallback)
+import smtplib, ssl
+from email.message import EmailMessage
 
 # =============== Configuración ===============
 st.set_page_config(page_title="Auto-corrección de Prácticos", page_icon="📝", layout="centered")
 st.title("📝 Auto-corrección de Prácticos")
 st.caption(
-    "Suba su archivo, elija el práctico y escriba **Nombre y Apellido** y el **correo** del alumno. "
+    "Subí el archivo, elegí el práctico y escribí **Nombre y Apellido** y el **correo** del alumno. "
     "La app devuelve puntaje por criterios y envía la devolución al alumno y a la cátedra."
 )
 
@@ -79,15 +83,37 @@ def cargar_practicos() -> list:
 
 PRACTICOS = cargar_practicos()
 
-# =============== Criterios (misma rúbrica) ===============
-CRITERIOS = [
+# =============== Rúbricas por práctico ===============
+# Formato: lista de tuplas (NombreCriterio, Puntos, [patrones_regex])
+RUBRICA_GENERICA = [
     ("Tema y Título", 20, [r"\btema\b", r"\bt[ií]tulo\b"]),
     ("Paradigma", 15, [r"\bparadigma\b"]),
     ("Pregunta de investigación", 20, [r"\bpregunta de investigaci[oó]n\b", r"\bpregunta problema\b"]),
     ("Objetivos", 30, [r"\bobjetivo(s)?\b", r"\bobjetivo general\b", r"\bobjetivos espec[íi]ficos\b"]),
     ("Hipótesis (si corresponde)", 15, [r"\bhip[oó]tesis\b"]),
 ]
-TOTAL_MAX = sum(p for _, p, _ in CRITERIOS)
+
+# Rúbrica específica — Práctico N° 7 (según tus correos “buenos”)
+RUBRICA_CUANTITATIVO = [
+    ("Medidas descriptivas", 25, [
+        r"\bmedia\b|\bpromedio\b|\bdesviaci[oó]n estándar\b|\bmediana\b|\bmoda\b|\bfrecuencias?\b"
+    ]),
+    ("Significancia / Mann-Whitney", 25, [
+        r"\bp-?value\b|\bp valor\b|\bsignificancia\b|\bmann-?whitney\b|\bU de Mann-Whitney\b"
+    ]),
+    ("Confiabilidad \(Cronbach\)", 25, [
+        r"\bcronbach\b|\balfa de cronbach\b|\balpha de cronbach\b"
+    ]),
+    ("Relación entre variables", 25, [
+        r"\bcorrelaci[oó]n\b|\bspearman\b|\bpearson\b|\ban[aá]lisis de cl[úu]ster\b|\bcluster\b"
+    ]),
+]
+
+def obtener_rubrica(nombre_practico: str):
+    if "cuantitativ" in nombre_practico.lower():  # “Análisis cuantitativo”
+        return RUBRICA_CUANTITATIVO
+    # Podés seguir agregando casos especiales aquí (cualitativo, etc.)
+    return RUBRICA_GENERICA
 
 # =============== Entradas ===============
 alumno_nombre = st.text_input("Nombre y apellido del alumno", placeholder="Ej.: Ana María Pérez")
@@ -135,23 +161,37 @@ if st.button("Corregir y Enviar"):
 
     text_lc = texto.lower()
 
-    # =============== Valoración simple por criterios ===============
+    # =============== Valoración según PRÁCTICO ELEGIDO ===============
+    CRITERIOS = obtener_rubrica(practico)
+    TOTAL_MAX = sum(p for _, p, _ in CRITERIOS)
+
     desglose = []
     puntaje_total = 0
     explicaciones = []
+
     for nombre, puntaje_max, patrones in CRITERIOS:
         hallado = any(re.search(pat, text_lc, flags=re.IGNORECASE) for pat in patrones)
         puntos = puntaje_max if hallado else 0
         puntaje_total += puntos
-        exp = f"Incluye {nombre.lower()}." if hallado else f"No se identificó {nombre.lower()}."
-        desglose.append((nombre, puntos, puntaje_max, exp))
-        explicaciones.append(f"- {nombre}: {puntos}/{puntaje_max}. {exp}")
+        if "Cronbach" in nombre:
+            exp_ok = "Menciona alfa de Cronbach con valor." if hallado else "Menciona alfa de Cronbach sin valor o no lo incluye."
+        elif "Significancia" in nombre:
+            exp_ok = "Menciona prueba de significancia (p-value o Mann-Whitney)." if hallado else "No menciona significancia (p-value o Mann-Whitney)."
+        elif "Relación entre variables" in nombre:
+            exp_ok = "Presenta correlación (Spearman/Pearson) o análisis de clúster." if hallado else "No presenta relación entre variables (Spearman/cluster)."
+        elif "Medidas descriptivas" in nombre:
+            exp_ok = "Menciona al menos una medida." if hallado else "No incluye medidas descriptivas."
+        else:
+            exp_ok = f"Incluye {nombre.lower()}." if hallado else f"No se identificó {nombre.lower()}."
+
+        desglose.append((nombre, puntos, puntaje_max, exp_ok))
+        explicaciones.append(f"- {nombre}: {puntos}/{puntaje_max}. {exp_ok}")
 
     puntaje_total = min(puntaje_total, TOTAL_MAX)
 
     # =============== Mensaje de devolución (preview) ===============
     desglose_por_criterios = "\n".join(explicaciones)
-    comentarios_generales = "Se evaluó la presencia de secciones fundamentales de un anteproyecto."
+    comentarios_generales = "Se evaluó la presencia de secciones fundamentales del práctico."
 
     mensaje_preview = f"""Resultado de la corrección automática:
 
@@ -169,35 +209,52 @@ Comentarios generales:
     st.success("✔️ Corregido y enviado al correo del alumno.")
     st.text_area("Mensaje enviado:", mensaje_preview, height=420)
 
-    # =============== Envío por SendGrid ===============
+    # =============== Envío de correos ===============
+
+    # Intento 1: SendGrid (si hay API Key y remitente)
     SENDGRID_API_KEY = st.secrets.get("SENDGRID_API_KEY", "")
-    SENDER_EMAIL     = st.secrets.get("SENDER_EMAIL", "")
-    # Si no definís EMAIL_CATEDRA en secrets, usa SIEMPRE esta casilla:
-    EMAIL_CATEDRA    = st.secrets.get("EMAIL_CATEDRA", "investigacion@uccuyo.edu.ar")
+    SENDER_EMAIL_SG  = st.secrets.get("SENDER_EMAIL", "")
 
-    if not SENDGRID_API_KEY or not SENDER_EMAIL:
-        st.warning("⚠️ Falta `SENDGRID_API_KEY` o `SENDER_EMAIL` en **st.secrets**. Abajo podés descargar el mensaje en TXT.")
-    else:
-        def enviar(to_email: str, incluir_correo_alumno: bool = False):
-            subject = f"Resultado — {practico} · {alumno_nombre}"
-            body = mensaje_preview
-            if incluir_correo_alumno:
-                body = f"Correo del alumno: {alumno_email}\n\n" + body  # << lo ves en tu copia
+    # Fallback: SMTP Gmail con tus secrets viejos
+    SMTP_HOST   = "smtp.gmail.com"
+    SMTP_PORT   = 465
+    EMAIL_USER  = st.secrets.get("EMAIL_USER", "")
+    EMAIL_PASS  = st.secrets.get("EMAIL_PASS", "")
+    EMAIL_CATEDRA = st.secrets.get("EMAIL_CATEDRA", st.secrets.get("TEACHER_BCC", "investigacion@uccuyo.edu.ar"))
 
-            message = Mail(
-                from_email=SENDER_EMAIL,
-                to_emails=to_email,
-                subject=subject,
-                plain_text_content=body
-            )
-            sg = SendGridAPIClient(SENDGRID_API_KEY)
-            sg.send(message)
+    def enviar_por_sendgrid(to_email: str, subject: str, body: str):
+        message = Mail(from_email=SENDER_EMAIL_SG, to_emails=to_email, subject=subject, plain_text_content=body)
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        sg.send(message)
 
-        try:
-            enviar(alumno_email)                               # al alumno
-            enviar(EMAIL_CATEDRA, incluir_correo_alumno=True)  # SIEMPRE a tu casilla con la línea extra
-        except Exception as e:
-            st.warning(f"No se pudo enviar el correo por SendGrid: {e}")
+    def enviar_por_smtp(to_email: str, subject: str, body: str):
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_USER
+        msg["To"] = to_email
+        msg.set_content(body)
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx) as server:
+            server.login(EMAIL_USER, EMAIL_PASS)
+            server.send_message(msg)
+
+    subject = f"Resultado — {practico} · {alumno_nombre}"
+
+    try:
+        if SENDGRID_API_KEY and SENDER_EMAIL_SG:
+            # Alumno
+            enviar_por_sendgrid(alumno_email, subject, mensaje_preview)
+            # Cátedra (incluye correo del alumno)
+            mensaje_catedra = f"Correo del alumno: {alumno_email}\n\n{mensaje_preview}"
+            enviar_por_sendgrid(EMAIL_CATEDRA, subject, mensaje_catedra)
+        elif EMAIL_USER and EMAIL_PASS:
+            enviar_por_smtp(alumno_email, subject, mensaje_preview)
+            mensaje_catedra = f"Correo del alumno: {alumno_email}\n\n{mensaje_preview}"
+            enviar_por_smtp(EMAIL_CATEDRA, subject, mensaje_catedra)
+        else:
+            st.warning("⚠️ Falta configuración de correo (SendGrid o EMAIL_USER/EMAIL_PASS). Descargá el TXT.")
+    except Exception as e:
+        st.warning(f"No se pudo enviar el correo: {e}")
 
     # =============== Descarga local del resultado (TXT) ===============
     nombre_txt = f"Devolucion_{alumno_nombre.replace(' ', '_')}.txt"
