@@ -558,7 +558,9 @@ st.markdown(
 :root {
     --ucc-green: #00664d;
     --ucc-green-dark: #00523e;
+    --ucc-green: #00664d;
     --ucc-green-dark: #00523e;
+    --ucc-green: #00664d;
     --ucc-accent: #28a745;
     --ucc-page-bg: #E6E6E6;
     --ucc-text: #262730;
@@ -725,9 +727,27 @@ p, span, .stMarkdown, .stCaption {
 [data-testid="stBaseButton-secondary"]:hover,
 .stButton > button:hover,
 [data-testid="stFileUploader"] button:hover {
-    background-color: var(--ucc-green-dark) !important;
+    background-color: #00523e !important;
 }
 [data-testid="stFileUploader"] button svg { fill: #ffffff !important; }
+[data-testid="stMetricLabel"],
+[data-testid="stMetricValue"],
+[data-testid="stMetricDelta"],
+[data-testid="stMetricLabel"] *,
+[data-testid="stMetricValue"] * {
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+}
+.ucc-score {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 0.9rem 1.15rem;
+    margin: 0.75rem 0 1rem 0;
+    color: #111827;
+    font-size: 1.35rem;
+    font-weight: 700;
+}
+.ucc-score span { color: #00664d; font-size: 1.7rem; }
 </style>
     """,
     unsafe_allow_html=True,
@@ -783,8 +803,17 @@ if st.button("Corregir y Enviar resultado"):
             score, breakdown, summary = evaluar_practico(practico_num, text, paragraphs, filetype)
             mensaje = build_feedback_message(practico_num, score, breakdown, summary)
 
-            st.metric("Puntaje", f"{score}/{RUBRIC_MAX[practico_num]}")
-            st.text_area("Devolución:", mensaje, height=300)
+            st.markdown(
+                f'<div class="ucc-score">Puntaje: <span>{score}/{RUBRIC_MAX[practico_num]}</span></div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown("**Devolución**")
+            st.text_area(
+                "Devolución",
+                mensaje,
+                height=360,
+                label_visibility="collapsed",
+            )
 
             asunto = f"Resultado — {PRACTICO_LABELS[practico_num]}"
             if enviar_email(correo, asunto, mensaje):
