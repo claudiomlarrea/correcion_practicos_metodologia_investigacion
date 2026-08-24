@@ -1,15 +1,53 @@
 import streamlit as st
-import io, re, smtplib, ssl
+import io, re, smtplib, ssl, html
+import base64
 from email.message import EmailMessage
 from pathlib import Path
 from docx import Document
 from pdfminer.high_level import extract_text
 from email_validator import validate_email, EmailNotValidError
 
+# Copia por defecto a la cátedra si no hay secreto TEACHER_EMAIL / TEACHER_BCC.
+DEFAULT_TEACHER_EMAIL = "investigacion@uccuyo.edu.ar"
+_APP_DIR = Path(__file__).resolve().parent
+_ESCUDO_REMOTE_URL = (
+    "https://raw.githubusercontent.com/claudiomlarrea/valorador_informes_avances/"
+    "main/assets/escudo_uccuyo.png"
+)
+
+
+def _resolve_escudo_path():
+    assets = _APP_DIR / "assets"
+    if not assets.is_dir():
+        return None
+    for name in (
+        "escudo_uccuyo.png",
+        "escudo_uccuyo.jpg",
+        "escudo_uccuyo.jpeg",
+        "logo_uccuyo.png",
+    ):
+        p = assets / name
+        if p.is_file():
+            return p
+    return None
+
+
+def _escudo_src_for_inline_html() -> str:
+    p = _resolve_escudo_path()
+    if p is not None:
+        raw = p.read_bytes()
+        mime = "image/jpeg" if raw[:2] == b"\xff\xd8" else "image/png"
+        return f"data:{mime};base64,{base64.standard_b64encode(raw).decode('ascii')}"
+    return _ESCUDO_REMOTE_URL
+
+
 # ---------------------------------
 # Configuración
 # ---------------------------------
-st.set_page_config(page_title="Auto-corrección | Metodología", layout="centered")
+st.set_page_config(
+    page_title="Corrección de prácticos | Metodología",
+    layout="wide",
+)
 
 RUBRIC_MAX = {1: 100, 2: 100, 3: 100, 4: 100, 5: 100, 6: 100, 7: 100, 8: 100}
 
@@ -37,6 +75,13 @@ def read_docx(file_bytes: bytes) -> dict:
         if txt:
             paragraphs.append((txt, style))
             texts.append(txt)
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [(cell.text or "").strip() for cell in row.cells]
+            line = " | ".join(c for c in cells if c)
+            if line:
+                paragraphs.append((line, "Table"))
+                texts.append(line)
     return {"plain_text": "\n".join(texts), "paragraphs": paragraphs, "filetype": "docx"}
 
 def read_pdf(file_bytes: bytes) -> dict:
@@ -66,8 +111,37 @@ def count_in_text(patterns, text_lower):
     return sum(1 for p in patterns if p in text_lower)
 
 def apa_inline_citations(text):
-    """Cuenta citas aproximadas con patrón (Apellido, 2020)."""
-    return len(re.findall(r"\([A-Za-zÁÉÍÓÚÜÑáéíóúüñ\-]+,\s?(19|20)\d{2}\)", text))
+    """Cuenta citas APA frecuentes: (Apellido, 2020), (A y B, 2020), (A et al., 2020), Apellido (2020)."""
+    patterns = [
+        r"\([A-Za-zÁÉÍÓÚÜÑáéíóúüñ\-]+(?:\s+y\s+[A-Za-zÁÉÍÓÚÜÑáéíóúüñ\-]+)?,\s*(?:19|20)\d{2}\)",
+        r"\([A-Za-zÁÉÍÓÚÜÑáéíóúüñ\-]+\s+et\s+al\.,\s*(?:19|20)\d{2}\)",
+        r"\b[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ\-]+\s+\((?:19|20)\d{2}\)",
+    ]
+    found = set()
+    for pat in patterns:
+        for m in re.finditer(pat, text):
+            found.add(m.group(0).lower())
+    return len(found)
+
+def mentions_ai(text_lower):
+    """Detecta mención real de IA, no la sílaba 'ia' dentro de 'social' o 'ciencia'."""
+    t = (text_lower or "").lower()
+    frases = [
+        "inteligencia artificial",
+        "chatgpt",
+        "chat gpt",
+        "herramienta de ia",
+        "herramientas de ia",
+        "uso de ia",
+        "apoyo de ia",
+        "ia generativa",
+        "copilot",
+        "gemini",
+        "claude",
+    ]
+    if any(f in t for f in frases):
+        return True
+    return re.search(r"(^|[^a-záéíóúüñ])ia([^a-záéíóúüñ]|$)", t) is not None
 
 def has_bibliography_section(text_lower):
     keys = ["bibliografía", "referencias", "referencias bibliográficas"]
@@ -81,11 +155,20 @@ def find_headings_docx(paragraphs):
     return h1, h2, h3
 
 def has_toc(text_lower, paragraphs, filetype):
-    """Detecta indicios de Tabla de contenido/Índice."""
-    if "tabla de contenido" in text_lower or "índice" in text_lower or "contenido" in text_lower:
+    """Detecta índice automático; no alcanza con la palabra suelta 'contenido'."""
+    keys = [
+        "tabla de contenido",
+        "tabla de contenidos",
+        "índice automático",
+        "indice automatico",
+        "table of contents",
+    ]
+    if any(k in text_lower for k in keys):
         return True
     if filetype == "docx":
-        if any("Table of Contents" in p[0] or "Contents" in p[0] for p in paragraphs):
+        if any("table of contents" in p[0].lower() for p in paragraphs):
+            return True
+        if any("toc" in (s or "").lower() for _, s in paragraphs):
             return True
     return False
 
@@ -218,13 +301,24 @@ def corregir_practico_4(text, paragraphs, filetype):
     elif citas == 1: pts, expl = 10, "Solo se detectó 1 cita."
     else: pts, expl = 0, "No se detectaron citas (Apellido, Año)."
     total += pts; bd.append(("Citas en el texto", pts, 30, expl))
-    # IA
-    pts = 15 if any(k in t for k in ["inteligencia artificial","chatgpt","herramienta de ia","ia"]) else 5
-    total += pts; bd.append(("Uso de IA (mención)", pts, 15, "Se menciona uso de IA." if pts == 15 else "No se menciona explícitamente apoyo de IA."))
-    # Bibliografía
+    # IA (15)
+    pts = 15 if mentions_ai(t) else 0
+    total += pts; bd.append(("Uso de IA (mención)", pts, 15, "Se menciona uso de IA." if pts else "No se menciona explícitamente apoyo de IA."))
+    # Bibliografía (15)
     pts = 15 if has_bibliography_section(t) else 0
     total += pts; bd.append(("Referencias/Bibliografía", pts, 15, "Incluye bibliografía." if pts else "No se detectó sección de bibliografía."))
-    return total, bd, "Se evaluó extensión total (~500), citas, mención de IA y bibliografía."
+    # Búsqueda de fuentes (20) — el práctico lo pide y antes no sumaba al 100
+    busq = [
+        "búsqueda", "busqueda", "scielo", "scopus", "scholar", "pubmed",
+        "redalyc", "dialnet", "base de datos", "bases de datos",
+        "palabras clave", "descriptores", "repositorio", "fuentes",
+    ]
+    hits = count_in_text(busq, t)
+    if hits >= 2: pts, expl = 20, "Describe la búsqueda de fuentes o bases consultadas."
+    elif hits == 1: pts, expl = 10, "Menciona la búsqueda de forma breve."
+    else: pts, expl = 0, "No se reconoce el apartado de búsqueda de fuentes."
+    total += pts; bd.append(("Búsqueda de fuentes", pts, 20, expl))
+    return total, bd, "Se evaluó extensión total (~500), citas, mención de IA, bibliografía y búsqueda."
 
 def corregir_practico_5(text, paragraphs, filetype):
     t = text.lower(); total = 0; bd = []
@@ -344,33 +438,63 @@ def evaluar_practico(num, text, paragraphs, filetype):
 # ---------------------------------
 # Envío de correo (SendGrid + fallback Gmail SMTP)
 # ---------------------------------
+def _secret(name, default=None):
+    try:
+        if name in st.secrets:
+            val = st.secrets[name]
+            if val is None:
+                return default
+            val = str(val).strip()
+            return val or default
+    except Exception:
+        pass
+    return default
+
+def correos_catedra():
+    """Correos de la cátedra: TEACHER_EMAIL, CATEDRA_EMAIL y/o TEACHER_BCC (coma-separados)."""
+    found = []
+    for key in ("TEACHER_EMAIL", "CATEDRA_EMAIL", "TEACHER_BCC"):
+        val = _secret(key)
+        if val:
+            found.extend(x.strip() for x in val.split(",") if x.strip())
+    if not found:
+        found.append(DEFAULT_TEACHER_EMAIL)
+    uniq, seen = [], set()
+    for email in found:
+        key = email.lower()
+        if key not in seen:
+            seen.add(key)
+            uniq.append(email)
+    return uniq
+
 def enviar_email(destinatario, asunto, mensaje_texto):
     """
-    1) Intenta enviar con SendGrid (mejor entregabilidad a Hotmail/Outlook/servicios institucionales).
-    2) Si falla o no hay API key, cae a Gmail SMTP (STARTTLS, 587).
+    Envía la devolución AL ALUMNO (To) y una COPIA A LA CÁTEDRA (Cc).
+    1) SendGrid  2) Gmail SMTP si SendGrid no está o falla.
     """
-    sender_email = st.secrets.get("SENDER_EMAIL", st.secrets.get("EMAIL_USER"))
-    sender_name  = st.secrets.get("SENDER_NAME", "Cátedra Metodología")
-    reply_to     = st.secrets.get("REPLY_TO", sender_email)
-    bcc          = st.secrets.get("TEACHER_BCC")
+    sender_email = _secret("SENDER_EMAIL") or _secret("EMAIL_USER")
+    sender_name  = _secret("SENDER_NAME", "Cátedra Metodología")
+    reply_to     = _secret("REPLY_TO", sender_email)
+    copias = [c for c in correos_catedra() if c.lower() != (destinatario or "").lower()]
 
     html_body = (
         "<html><body>"
-        f"<pre style='white-space:pre-wrap;font-family:inherit'>{mensaje_texto}</pre>"
+        f"<pre style='white-space:pre-wrap;font-family:inherit'>{html.escape(mensaje_texto)}</pre>"
         "<hr>"
         "<p style='font-size:12px;color:#666'>"
-        "Este correo fue enviado automáticamente por la plataforma de la cátedra. "
+        "Este correo fue enviado automáticamente por la plataforma de la cátedra "
+        "(copia a la cátedra). "
         "Si no lo ves en tu bandeja de entrada, revisá <b>Correo no deseado</b> y marcá como ‘No es spam’."
         "</p>"
         "</body></html>"
     )
 
     # Ruta 1: SendGrid
-    api_key = st.secrets.get("SENDGRID_API_KEY")
+    api_key = _secret("SENDGRID_API_KEY")
     if api_key:
         try:
             from sendgrid import SendGridAPIClient
-            from sendgrid.helpers.mail import Mail, Email, To, Bcc, ReplyTo
+            from sendgrid.helpers.mail import Mail, Email, To, Cc, ReplyTo
 
             mail = Mail(
                 from_email=Email(sender_email, sender_name),
@@ -379,8 +503,8 @@ def enviar_email(destinatario, asunto, mensaje_texto):
                 html_content=html_body,
                 plain_text_content=mensaje_texto,
             )
-            if bcc:
-                mail.add_bcc(Bcc(bcc))
+            for copia in copias:
+                mail.add_cc(Cc(copia))
             if reply_to:
                 mail.reply_to = ReplyTo(reply_to)
 
@@ -395,16 +519,19 @@ def enviar_email(destinatario, asunto, mensaje_texto):
 
     # Ruta 2: Gmail SMTP (fallback)
     try:
-        remitente = st.secrets["EMAIL_USER"]
-        password  = st.secrets["EMAIL_PASS"]
+        remitente = _secret("EMAIL_USER")
+        password  = _secret("EMAIL_PASS")
+        if not remitente or not password:
+            raise RuntimeError("Faltan EMAIL_USER / EMAIL_PASS en secretos de Streamlit.")
 
         msg = EmailMessage()
         msg["From"] = f"{sender_name} <{sender_email or remitente}>"
         msg["To"] = destinatario
         msg["Subject"] = asunto
-        msg["Reply-To"] = reply_to
-        if bcc:
-            msg["Bcc"] = bcc
+        if reply_to:
+            msg["Reply-To"] = reply_to
+        if copias:
+            msg["Cc"] = ", ".join(copias)
         msg.set_content(mensaje_texto)
         msg.add_alternative(html_body, subtype="html")
 
@@ -425,8 +552,170 @@ def enviar_email(destinatario, asunto, mensaje_texto):
 # ---------------------------------
 # Interfaz Streamlit
 # ---------------------------------
-st.title("📑 Auto-corrección de Prácticos")
-st.write("Suba su archivo, elija el práctico y escriba el correo electrónico del alumno. Recibirá puntaje y explicaciones por criterio.")
+st.markdown(
+    """
+<style>
+:root {
+    --ucc-green: #00664d;
+    --ucc-green-dark: #00523e;
+    --ucc-green-dark: #00523e;
+    --ucc-accent: #28a745;
+    --ucc-page-bg: #E6E6E6;
+    --ucc-text: #262730;
+    --ucc-heading-card: #2c3838;
+    --ucc-lead-muted: #5f6b6f;
+}
+.stApp { background-color: var(--ucc-page-bg); }
+header[data-testid="stHeader"] {
+    background: var(--ucc-page-bg) !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+div[data-testid="stDecoration"] {
+    height: 3px !important;
+    background: linear-gradient(90deg, var(--ucc-green-dark), var(--ucc-green), var(--ucc-green-dark)) !important;
+}
+.block-container {
+    padding-top: 2rem !important;
+    max-width: 920px;
+}
+.ucc-inst-header {
+    background: var(--ucc-green);
+    border-radius: 14px;
+    padding: 1.25rem 1.65rem;
+    margin-bottom: 1.35rem;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 1.35rem;
+    flex-wrap: wrap;
+    box-sizing: border-box;
+}
+.ucc-inst-escudo {
+    width: 112px;
+    max-width: 28vw;
+    height: auto;
+    flex-shrink: 0;
+    display: block;
+    object-fit: contain;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.1);
+}
+.ucc-inst-banner-text {
+    flex: 1 1 240px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.header-uccuyo h1.ucc-banner-heading,
+.header-uccuyo h2.ucc-banner-heading,
+.header-uccuyo h3.ucc-banner-heading {
+    color: #ffffff !important;
+    margin: 0;
+    line-height: 1.2;
+    font-family: "Source Sans Pro", ui-sans-serif, system-ui, sans-serif;
+}
+.header-uccuyo h1.ucc-banner-heading {
+    font-size: clamp(1.35rem, 2.8vw, 1.95rem);
+    font-weight: 700;
+}
+.header-uccuyo h2.ucc-banner-heading {
+    margin-top: 0.55rem !important;
+    font-size: clamp(1rem, 2vw, 1.25rem);
+    font-weight: 500;
+}
+.header-uccuyo h3.ucc-banner-heading {
+    margin-top: 0.35rem !important;
+    font-size: clamp(0.85rem, 1.4vw, 1rem);
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.92) !important;
+}
+.ucc-intro-card {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 1.75rem 2rem;
+    margin-bottom: 1.65rem;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.ucc-intro-card h1.uc-card-main-title {
+    color: var(--ucc-heading-card) !important;
+    margin: 0 0 0.75rem 0 !important;
+    font-size: clamp(1.3rem, 2.8vw, 1.85rem);
+    font-weight: 700;
+    line-height: 1.25;
+    font-family: "Source Sans Pro", ui-sans-serif, system-ui, sans-serif;
+}
+.ucc-intro-card p.uc-card-lead {
+    color: var(--ucc-lead-muted) !important;
+    margin: 0 !important;
+    line-height: 1.6;
+    font-size: 1.02rem;
+}
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea {
+    border-radius: 12px !important;
+    border: 1px solid rgba(0, 82, 62, 0.22) !important;
+    background-color: #ffffff !important;
+    color: var(--ucc-text) !important;
+}
+[data-baseweb="select"] > div:first-child { border-radius: 12px !important; }
+[data-testid="stFileUploader"] section[data-testid="stFileUploaderDropzone"] {
+    background-color: #1e1e1e !important;
+    border-radius: 12px !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    padding: 0.85rem 1rem !important;
+}
+[data-testid="stFileUploader"] section[data-testid="stFileUploaderDropzone"] span,
+[data-testid="stFileUploader"] section[data-testid="stFileUploaderDropzone"] small {
+    color: rgba(255, 255, 255, 0.92) !important;
+}
+[data-testid="stBaseButton-primary"],
+[data-testid="stBaseButton-secondary"],
+.stButton > button,
+[data-testid="stFileUploader"] button {
+    background-color: var(--ucc-green) !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+[data-testid="stBaseButton-primary"]:hover,
+[data-testid="stBaseButton-secondary"]:hover,
+.stButton > button:hover,
+[data-testid="stFileUploader"] button:hover {
+    background-color: var(--ucc-green-dark) !important;
+}
+[data-testid="stFileUploader"] button svg { fill: #ffffff !important; }
+</style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    f"""
+<div class="ucc-inst-header header-uccuyo">
+<img class="ucc-inst-escudo" src="{_escudo_src_for_inline_html()}" alt="Universidad Católica de Cuyo" />
+<div class="ucc-inst-banner-text">
+<h1 class="ucc-banner-heading">Universidad Católica de Cuyo</h1>
+<h2 class="ucc-banner-heading">Secretaría de Investigación</h2>
+<h3 class="ucc-banner-heading">Consejo de Investigación</h3>
+</div>
+</div>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+<div class="ucc-intro-card">
+<h1 class="uc-card-main-title">Corrección de prácticos — Metodología de la Investigación</h1>
+<p class="uc-card-lead">Subí el práctico (PDF o DOCX) para evaluarlo automáticamente según la rúbrica del curso. El resultado se envía a tu correo y una copia a la cátedra.</p>
+</div>
+    """,
+    unsafe_allow_html=True,
+)
 
 correo = st.text_input("Correo electrónico del alumno")
 
@@ -436,9 +725,14 @@ label_seleccionado = st.selectbox("Práctico", opciones)
 label_to_num = {v: k for k, v in PRACTICO_LABELS.items()}
 practico_num = label_to_num[label_seleccionado]
 
-uploaded = st.file_uploader("Subir archivo (.docx o .pdf)", type=["docx", "pdf"])
+st.info("**Cargar archivo** — PDF o DOCX. Usá el recuadro oscuro abajo.")
+uploaded = st.file_uploader(
+    "Subir archivo (.docx o .pdf)",
+    type=["docx", "pdf"],
+    label_visibility="collapsed",
+)
 
-if st.button("Corregir y Enviar"):
+if st.button("Corregir y Enviar resultado"):
     if not uploaded or not correo:
         st.warning("Debe subir un archivo y un correo válido.")
     else:
@@ -450,9 +744,18 @@ if st.button("Corregir y Enviar"):
             score, breakdown, summary = evaluar_practico(practico_num, text, paragraphs, filetype)
             mensaje = build_feedback_message(practico_num, score, breakdown, summary)
 
+            st.metric("Puntaje", f"{score}/{RUBRIC_MAX[practico_num]}")
+            st.text_area("Devolución:", mensaje, height=300)
+
             asunto = f"Resultado — {PRACTICO_LABELS[practico_num]}"
             if enviar_email(correo, asunto, mensaje):
-                st.success("✅ Corregido y enviado al correo del alumno.")
-                st.text_area("Mensaje enviado:", mensaje, height=300)
+                st.success(
+                    f"Corregido. Devolución enviada a {correo} y copia a la cátedra."
+                )
+            else:
+                st.warning(
+                    "La corrección está arriba, pero el correo no se pudo enviar. "
+                    "Revisá los secretos de Streamlit (SendGrid o Gmail) y TEACHER_EMAIL."
+                )
         except EmailNotValidError:
             st.error("Correo electrónico inválido.")
