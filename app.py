@@ -747,15 +747,26 @@ label,
     font-weight: 700;
 }
 .ucc-score span { color: #00664d; font-size: 1.7rem; }
+.ucc-banner-title,
+.ucc-banner-sub,
 .ucc-inst-header,
-.ucc-inst-header h1,
-.ucc-inst-header h2,
-.ucc-inst-header h3,
-.ucc-inst-header p,
-.ucc-inst-header span,
 .ucc-inst-header * {
     color: #ffffff !important;
     -webkit-text-fill-color: #ffffff !important;
+}
+.ucc-banner-title {
+    margin: 0;
+    font-size: clamp(1.35rem, 2.8vw, 1.95rem);
+    font-weight: 700;
+    line-height: 1.2;
+    font-family: "Source Sans Pro", ui-sans-serif, system-ui, sans-serif;
+}
+.ucc-banner-sub {
+    margin: 0.55rem 0 0 0;
+    font-size: clamp(1rem, 2vw, 1.25rem);
+    font-weight: 500;
+    line-height: 1.2;
+    font-family: "Source Sans Pro", ui-sans-serif, system-ui, sans-serif;
 }
 </style>
     """,
@@ -767,8 +778,8 @@ st.markdown(
 <div class="ucc-inst-header header-uccuyo">
 <img class="ucc-inst-escudo" src="{_escudo_src_for_inline_html()}" alt="Universidad Católica de Cuyo" />
 <div class="ucc-inst-banner-text">
-<h1 class="ucc-banner-heading" style="color:#ffffff;-webkit-text-fill-color:#ffffff;margin:0;">Universidad Católica de Cuyo</h1>
-<h2 class="ucc-banner-heading" style="color:#ffffff;-webkit-text-fill-color:#ffffff;margin:0.55rem 0 0 0;">Secretaría de Investigación</h2>
+<div class="ucc-banner-title">Universidad Católica de Cuyo</div>
+<div class="ucc-banner-sub">Secretaría de Investigación</div>
 </div>
 </div>
     """,
